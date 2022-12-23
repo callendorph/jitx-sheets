@@ -262,10 +262,12 @@ public deftype CursorState
 public defmulti position (self:CursorState) -> Point
 public defmulti line-break (self:CursorState) -> False
 public defmulti next-line (self:CursorState) -> False
+public defmulti line-return (self:CursorState) -> False
 public defmulti move (self:CursorState, newPt:Point) -> False
 public defmulti text-write (self:CursorState, content:String) -> False
 public defmulti wrap-write (self:CursorState, content:String) -> False
 public defmulti list-marker-write (self:CursorState, indent:Int) -> False
+public defmulti update-cursor (self:CursorState, sh:Shape)
 
 public defn CursorState (dstack:ListStack<DivState>, fstack:ListStack<FontState>, shapes:ListStack<Shape>) -> CursorState :
   val div = head(dstack)
@@ -283,6 +285,10 @@ public defn CursorState (dstack:ListStack<DivState>, fstack:ListStack<FontState>
       val font = head(fstack)
       ; @TODO - margin ?
       pt = Point(0.0, y(pt) - 1.2 * size(font) )
+    defmethod line-return (this) -> False :
+      ; Move back to the beginning of the div
+      ;  but maintain the current y.
+      pt = Point(0.0, y(pt))
     defmethod text-write (this, content:String) :
       ; This function will generate the passed string as
       ;   text output at the current cursor.
@@ -295,13 +301,16 @@ public defn CursorState (dstack:ListStack<DivState>, fstack:ListStack<FontState>
       push(shapes, t)
 
       ; println("Point: %~  Text: %_" % [textPt, content])
-      val tSize = dims(t)
+      update-cursor(this, t)
+
+    defmethod update-cursor (this, sh:Shape):
+      val tSize = dims(sh)
       val newX = x(pt) + x(tSize)
       if newX > x(size(div)):
         ; Updated cursor position will need to be on the next line.
         next-line(this)
       else:
-        pt = Point(newX, y(pt))
+        move(this, Point(newX, y(pt)))
 
     defmethod wrap-write (this, content:String) -> False :
       ; This function will attempt to wrap the passed text to the
@@ -316,8 +325,13 @@ public defn CursorState (dstack:ListStack<DivState>, fstack:ListStack<FontState>
       val R = size(font) / 4.0
       val tx = transform(dstack)
       val mPt = center(tx * loc(pt))
-      val marker = Circle(mPt, R)
+      val marker = Circle(W, x(mPt), y(mPt), R)
       push(shapes, marker)
+      update-cursor(this, marker)
+
+    defmethod print (o:OutputStream, this) :
+      print(o, "Cursor: %_" % [position(this)])
+
 
 public deftype Renderer
 public defmulti process (s:Renderer, fpath:String) -> False
@@ -422,10 +436,13 @@ public defn Renderer (sheet:Dims) -> Renderer :
                 else:
                   list-marker-write(cursor, get-indent(h))
 
+                line-return(cursor)
+
+                println("Cursor: %~" % [cursor])
                 val currY = y(position(cursor))
                 val currDiv = head(dstack)
                 val d = size(currDiv)
-                val dist = 2.0
+                val dist = 5.0
                 val next = DivState(NW, loc(dist, 0.0), Dims(x(d) - dist, y(d) - currY))
 
                 push(dstack, next)

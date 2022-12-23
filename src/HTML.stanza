@@ -204,6 +204,7 @@ public defn FontState (a:Anchor, s:Double, ang:Double) -> FontState :
         (_:TidyTag_H6):
           FontState(anchor, 3.0, ang)
 
+
 public deftype ListStack<T> <: Collection<T>
 public defmulti push<?T> (s:ListStack<?T>, x:T) -> False
 public defmulti pop<?T> (s:ListStack<?T>) -> T
@@ -211,6 +212,8 @@ public defmulti head<?T> (s:ListStack<?T>) -> T
 public defmulti reset-stack<?T> (s:ListStack<?T>) -> False
 public defmulti is-root?<?T> (s:ListStack<?T>) -> True|False
 public defmulti empty?<?T> (s:ListStack<?T>) -> True|False
+public defmulti push<?T> (body:T -> False, s:ListStack<?T>, x:T)
+
 
 public defn ListStack<T> (initial:Maybe<T>) -> ListStack :
   var items = List()
@@ -221,6 +224,12 @@ public defn ListStack<T> (initial:Maybe<T>) -> ListStack :
   new ListStack :
     defmethod push (this, x:T) -> False:
       items = cons(x, items)
+    defmethod push (body:T -> ?, this, x:T) :
+      push(this, x)
+      try:
+        body(x)
+      finally :
+        pop(this)
     defmethod pop (this) -> T :
       if empty?(this):
         throw(ListStackError("Stack must not be empty - Pop on empty list is invalid"))
@@ -244,6 +253,7 @@ public defn ListStack<T> (initial:Maybe<T>) -> ListStack :
     defmethod to-seq (this):
       to-seq(items)
 
+
 public defmethod reset-stack (stack:ListStack<ListState>) -> False :
   val s = stack as ListStack
   reset-stack(s)
@@ -257,6 +267,15 @@ public defn indent (stack:ListStack<ListState>, ordered?:True|False) -> ListStat
     next = ListState(head(stack), ordered?)
   push(stack, next)
   next
+
+public defn indent (body: ListState -> ?, stack:ListStack<ListState>, ordered?:True|False) :
+  ; Helper method for ol/ul lists
+  val next = indent(stack, ordered?)
+  try:
+    body(next)
+  finally:
+    pop(stack)
+
 
 public deftype CursorState
 public defmulti position (self:CursorState) -> Point
@@ -394,41 +413,32 @@ public defn Renderer (sheet:Dims) -> Renderer :
               (t:TidyTag_H1|TidyTag_H2|TidyTag_H3|TidyTag_H4|TidyTag_H5|TidyTag_H6):
                 println("H")
 
-                val hFont = mk-header-state(head(fstack), t)
-                push(fstack, hFont)
+                within hFont = push(fstack, mk-header-state(head(fstack), t)) :
+                  val cursor = head(cstack)
+                  line-break(cursor)
 
-                val cursor = head(cstack)
-                line-break(cursor)
+                  process(this, doc, child)
 
-                process(this, doc, child)
+                  val msg = string-join(reverse(text))
+                  reset-text-buffer(this)
 
-                val msg = string-join(reverse(text))
-                reset-text-buffer(this)
+                  wrap-write(cursor, msg)
 
-                wrap-write(cursor, msg)
-
-                line-break(cursor)
-                pop(fstack)
-                ; Pop H header font
+                  line-break(cursor)
               (_:TidyTag_DIV):
               ;   ; This tag sets the area where the content will be
               ;   ; rendered.
                 println("Div")
                 val curr = head(dstack)
-                val next = make-div(curr, child)
-                push(dstack, next)
-                ; @TODO Update font stack here ?
-                push(cstack, CursorState(dstack, fstack, shapes))
-
-                process(this, doc, child)
-                pop(dstack)
-                pop(cstack)
+                within next = push(dstack, make-div(curr, child)):
+                  within cursor = push(cstack, CursorState(dstack, fstack, shapes)) :
+                    process(this, doc, child)
 
               (_:TidyTag_LI):
                 val h = head(lstack)
 
                 val cursor = head(cstack)
-                ; @TODO differentiate between ol and ul
+
                 if is-ordered?(h):
                   val olIndex:Int = get-index(h) + 1
                   val indexStr = to-string("%~." % [olIndex])
@@ -445,48 +455,38 @@ public defn Renderer (sheet:Dims) -> Renderer :
                 val dist = 5.0
                 val next = DivState(NW, loc(dist, 0.0), Dims(x(d) - dist, y(d) - currY))
 
-                push(dstack, next)
+                within _ = push(dstack, next):
+                  within p = push(cstack, CursorState(dstack, fstack, shapes)) :
+                    process(this, doc, child)
 
-                push(cstack, CursorState(dstack, fstack, shapes))
+                  val msg = string-join(reverse(text))
+                  reset-text-buffer(this)
 
-                process(this, doc, child)
-
-                val msg = string-join(reverse(text))
-                reset-text-buffer(this)
-
-                wrap-write(cursor, msg)
-                next-line(cursor)
-                incr-index(h)
-
-                pop(cstack)
-                pop(dstack)
+                  wrap-write(cursor, msg)
+                  next-line(cursor)
+                  incr-index(h)
+                  false
 
               (t:TidyTag_OL|TidyTag_UL):
-                ; Indent the list stack for ordered lists
-                indent(lstack, t == TidyTag_OL)
+                within _ = indent(lstack, t == TidyTag_OL):
 
-                val cursor = head(cstack)
-                val currY = y(position(cursor))
-                val currDiv = head(dstack)
-                val d = size(currDiv)
-                val dist = 5.0
-                val next = DivState(NW, loc(dist, currY), Dims(x(d) - dist, y(d) - currY))
+                  val cursor = head(cstack)
+                  val currY = y(position(cursor))
+                  val currDiv = head(dstack)
+                  val d = size(currDiv)
+                  val dist = 5.0
+                  val next = DivState(NW, loc(dist, currY), Dims(x(d) - dist, y(d) - currY))
 
-                push(dstack, next)
-                push(cstack, CursorState(dstack, fstack, shapes))
+                  within _ = push(dstack, next) :
+                    val last = CursorState(dstack, fstack, shapes)
+                    within _ = push(cstack, last) :
+                      process(this, doc, child)
 
-                process(this, doc, child)
-
-                val last = pop(cstack)
-                val pt = position(last)
-                println("Last Position: %~" % [pt])
-                val curs2 = head(cstack)
-                val currPt = position(curs2)
-                println("Curr Position: %~" % [currPt])
-                move(curs2, Point(x(currPt), y(currPt) + y(pt)))
-
-                ;pop(cstack)
-                pop(dstack)
-                pop(lstack)
+                    val pt = position(last)
+                    ;println("Last Position: %~" % [pt])
+                    val curs2 = head(cstack)
+                    val currPt = position(curs2)
+                    ;println("Curr Position: %~" % [currPt])
+                    move(curs2, Point(x(currPt), y(currPt) + y(pt)))
 
 

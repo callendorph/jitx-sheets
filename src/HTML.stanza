@@ -320,6 +320,7 @@ public defn CursorState (dstack:ListStack<DivState>, fstack:ListStack<FontState>
       push(shapes, marker)
 
 public deftype Renderer
+public defmulti process (s:Renderer, fpath:String) -> False
 ; Recursive method that renders the HTML document tree.
 public defmulti process (s:Renderer, doc:TidyDoc, node:TidyNode) -> False
 public defmulti get-shapes (s:Renderer) -> Tuple<Shape>
@@ -338,6 +339,16 @@ public defn Renderer (sheet:Dims) -> Renderer :
   var text = List()
 
   new Renderer :
+    defmethod process (this, fpath:String) :
+      val doc = TidyDoc()
+      parse-file(doc, fpath)
+      clean-and-repair(doc)
+
+      val html = get-html(doc)
+      match(html):
+        (_:None): fatal("No HTML Node Found in File to Render")
+        (x:One<TidyNode>): process(this, doc, value(x))
+
     defmethod get-shapes (this) -> Tuple<Shape> :
       to-tuple(to-seq(shapes))
     defmethod render (this, layerSpec:LayerSpecifier) -> False :
@@ -360,6 +371,9 @@ public defn Renderer (sheet:Dims) -> Renderer :
               text = cons(content, text)
           (_:TidyNode_Start):
             match( chId ):
+              (_:TidyTag_HEAD|TidyTag_BODY|TidyTag_META|TidyTag_TITLE):
+                println("HEAD | BODY")
+                process(this, doc, child)
               (_:TidyTag_B|TidyTag_I|TidyTag_U):
                 println("Tag %_ Not Supported Yet - Just Adding Text" %[get-name(child)])
                 process(this, doc, child)

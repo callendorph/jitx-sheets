@@ -265,6 +265,7 @@ public defmulti next-line (self:CursorState) -> False
 public defmulti move (self:CursorState, newPt:Point) -> False
 public defmulti text-write (self:CursorState, content:String) -> False
 public defmulti wrap-write (self:CursorState, content:String) -> False
+public defmulti list-marker-write (self:CursorState, indent:Int) -> False
 
 public defn CursorState (dstack:ListStack<DivState>, fstack:ListStack<FontState>, shapes:ListStack<Shape>) -> CursorState :
   val div = head(dstack)
@@ -309,6 +310,14 @@ public defn CursorState (dstack:ListStack<DivState>, fstack:ListStack<FontState>
       val lines = word-wrap(content, div, font)
       for line in lines do:
         text-write(this, line)
+
+    defmethod list-marker-write (this, indent:Int) -> False :
+      val font = head(fstack)
+      val R = size(font) / 4.0
+      val tx = transform(dstack)
+      val mPt = center(tx * loc(pt))
+      val marker = Circle(mPt, R)
+      push(shapes, marker)
 
 public deftype Renderer
 ; Recursive method that renders the HTML document tree.
@@ -392,9 +401,12 @@ public defn Renderer (sheet:Dims) -> Renderer :
 
                 val cursor = head(cstack)
                 ; @TODO differentiate between ol and ul
-                val olIndex:Int = get-index(h) + 1
-                val indexStr = to-string("%~." % [olIndex])
-                text-write(cursor, indexStr)
+                if is-ordered?(h):
+                  val olIndex:Int = get-index(h) + 1
+                  val indexStr = to-string("%~." % [olIndex])
+                  text-write(cursor, indexStr)
+                else:
+                  list-marker-write(cursor, get-indent(h))
 
                 val currY = y(position(cursor))
                 val currDiv = head(dstack)

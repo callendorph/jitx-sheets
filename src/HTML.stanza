@@ -213,7 +213,6 @@ public deftype ListStack<T> <: Collection<T>
 public defmulti push<?T> (s:ListStack<?T>, x:T) -> False
 public defmulti pop<?T> (s:ListStack<?T>) -> T
 public defmulti head<?T> (s:ListStack<?T>) -> T
-public defmulti reset-stack<?T> (s:ListStack<?T>) -> False
 public defmulti is-root?<?T> (s:ListStack<?T>) -> True|False
 public defmulti empty?<?T> (s:ListStack<?T>) -> True|False
 public defmulti push<?T> (body:T -> False, s:ListStack<?T>, x:T)
@@ -242,10 +241,6 @@ public defn ListStack<T> (initial:Maybe<T>) -> ListStack :
       ret
     defmethod head (this) -> T :
       head(items)
-    defmethod reset-stack (this) -> False :
-      match(initial):
-        (x:One<T>): items = cons(value(x), items)
-        (t:None): items = List()
     defmethod is-root? (this) -> True|False :
       length(items) == 1
     defmethod empty? (this) -> True|False :
@@ -257,12 +252,6 @@ public defn ListStack<T> (initial:Maybe<T>) -> ListStack :
     defmethod to-seq (this):
       to-seq(items)
 
-
-public defmethod reset-stack (stack:ListStack<ListState>) -> False :
-  val s = stack as ListStack
-  reset-stack(s)
-  val h = head(stack)
-  reset-state(h)
 
 public defn indent (stack:ListStack<ListState>, ordered?:True|False) -> ListState :
   ; Helper method for ol/ul lists

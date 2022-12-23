@@ -1,0 +1,78 @@
+#use-added-syntax(jitx)
+defpackage sheets/DrawingSheet :
+  import core
+  import jitx
+  import jitx/commands
+  import ocdb/utils/landpatterns
+  ;import etools/NumTools
+
+
+public pcb-struct sheets/DrawingSheet/FrameProps :
+  ; Frame Properties.
+  ; Grid = Dimensions of the Grid on the Sheet.
+  ;   X = Columns of the grid, equally spaced across the page as Letters
+  ;   Y = Rows of the grid, equally spaced up the side as numbers
+  grid:Point
+  ; Frame Width
+  width:Double
+  ; Sheet Line Width
+  line-width:Double
+  ; Text Font Size
+  text-size:Double
+
+
+public pcb-module centered-frame (paper:Point, sheetLayer:LayerSpecifier, frame:sheets/DrawingSheet/FrameProps) :
+  ;inside pcb-module:
+    ; Outline Rectangles
+    val [w,h] = [x(paper), y(paper)]
+    val lw = line-width(frame)
+    layer(sheetLayer) = LineRectangle(w, h, 0.0, 0.0, lw)
+    val frameWidth = width(frame)
+    layer(sheetLayer) = LineRectangle(w - (2.0 * frameWidth), h - (2.0 * frameWidth), 0.0, 0.0, lw)
+
+    ; Make Grid Markings
+    val [cols, rows] = [x(grid(frame)), y(grid(frame))]
+    val row-size = h / rows
+    val col-size = w / cols
+
+    for c in 0 to to-int(cols) do :
+      val sx = (- (w / 2.0)) + (to-double(c) * col-size)
+      val tx = sx + (col-size / 2.0)
+      val ty = (h / 2.0) - (frameWidth / 2.0)
+      val rowId = to-string("%_" % [c + 1])
+      ;val rowId = to-letter-base(c + 1)
+      layer(sheetLayer) = Text(rowId, text-size(frame), C, loc(tx,ty))
+      layer(sheetLayer) = Text(rowId, text-size(frame), C, loc(tx,(- ty)))
+      if c != 0 :
+        val y0 = (h / 2.0)
+        val y1 = y0 - frameWidth
+        layer(sheetLayer) = Line(lw, [Point(sx, y0), Point(sx, y1)])
+        layer(sheetLayer) = Line(lw, [Point(sx, (- y0)), Point(sx, (- y1))])
+
+    for r in 0 to to-int(rows) do :
+      val sy = (- (h / 2.0)) + (to-double(r) * row-size)
+      val tx = (w / 2.0) - (frameWidth / 2.0)
+      val ty = sy + (row-size / 2.0)
+      val colId = to-string("%_" % [r + 1])
+      layer(sheetLayer) = Text(colId, text-size(frame), C, loc(tx,ty))
+      layer(sheetLayer) = Text(colId, text-size(frame), C, loc((- tx),ty))
+      if r != 0 :
+        val x0 = (w / 2.0)
+        val x1 = x0 - frameWidth
+        layer(sheetLayer) = Line(lw, [Point(x0, sy), Point(x1, sy)])
+        layer(sheetLayer) = Line(lw, [Point((- x0), sy), Point((- x1), sy)])
+
+public defn draw-frame (paper:Point, offset:Pose, sheetLayer:LayerSpecifier, frame:sheets/DrawingSheet/FrameProps) :
+  inside pcb-module:
+    ; Place the Frame via the kinematic tree.
+    public inst f : centered-frame(paper, sheetLayer, frame)
+    place(f) at offset on Top
+
+public defn add-sheet-template (paper:Point, offset:Pose, sheetLayer:LayerSpecifier, frame:sheets/DrawingSheet/FrameProps) :
+  ; Generate a sheet template in the PCB view.
+  ; @param paper Dimensions of the paper size that we will be generating the sheet template on.
+  ; @param sheetLayer Which layer to draw the sheet on - typically there is a sheet layer with this content only.
+  ; @param offset - Offset this sheet from the origin of the design by this amount.
+  ; @param frame - Frame Properties to define the grid and size of the framing.
+  inside pcb-module:
+    draw-frame(paper, offset, sheetLayer, frame)

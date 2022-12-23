@@ -159,6 +159,9 @@ public defn DivState (a:Anchor, p:Pose, d:Dims) -> DivState :
       println("New Div R: %~" % [newR])
       val p = center(pose(newR))
       DivState(NW, loc(x(p), y(p)), Dims(width(newR), height(newR)))
+    defmethod print (o:OutputStream, this) :
+      print(o, "Div: size=%_, origin=%_, anchor=%_" % [d, p, a])
+
 
 public defn transform (stack:ListStack<DivState>) -> Pose :
   defn f (a:Pose, b:DivState) -> Pose :
@@ -203,7 +206,8 @@ public defn FontState (a:Anchor, s:Double, ang:Double) -> FontState :
           FontState(anchor, 4.0, ang)
         (_:TidyTag_H6):
           FontState(anchor, 3.0, ang)
-
+    defmethod print (o:OutputStream, this) :
+      print(o, "Font: size=%_, angle=%_, anchor=%_" % [s, ang, a])
 
 public deftype ListStack<T> <: Collection<T>
 public defmulti push<?T> (s:ListStack<?T>, x:T) -> False

@@ -172,6 +172,7 @@ defmulti angle (self:FontState) -> Double
 defmulti mk-text (self:FontState, content:String, p:Pose) -> Shape
 defmulti mk-text (self:FontState, content:String) -> Shape
 defmulti get-dims (self:FontState, content:String) -> Dims
+defmulti mk-header-state (self:FontState, t:TidyTagId) -> FontState
 
 public defn FontState (a:Anchor, s:Double, ang:Double) -> FontState :
   val anchor = a
@@ -188,6 +189,20 @@ public defn FontState (a:Anchor, s:Double, ang:Double) -> FontState :
       mk-text(this, content, loc(0.0, 0.0))
     defmethod get-dims (this, content:String) -> Dims :
       dims(mk-text(this, content))
+    defmethod mk-header-state (this, t:TidyTagId) -> FontState :
+      match(t):
+        (_:TidyTag_H1):
+          FontState(anchor, 12.0, ang)
+        (_:TidyTag_H2):
+          FontState(anchor, 10.0, ang)
+        (_:TidyTag_H3):
+          FontState(anchor, 8.0, ang)
+        (_:TidyTag_H4):
+          FontState(anchor, 6.0, ang)
+        (_:TidyTag_H5):
+          FontState(anchor, 4.0, ang)
+        (_:TidyTag_H6):
+          FontState(anchor, 3.0, ang)
 
 public deftype ListStack<T> <: Collection<T>
 public defmulti push<?T> (s:ListStack<?T>, x:T) -> False
@@ -251,7 +266,7 @@ public defmulti move (self:CursorState, newPt:Point) -> False
 public defmulti text-write (self:CursorState, content:String) -> False
 public defmulti wrap-write (self:CursorState, content:String) -> False
 
-public defn CursorState (dstack:ListStack<DivState>, font:FontState, shapes:ListStack<Shape>) -> CursorState :
+public defn CursorState (dstack:ListStack<DivState>, fstack:ListStack<FontState>, shapes:ListStack<Shape>) -> CursorState :
   val div = head(dstack)
   var pt = Point(0.0, 0.0)
   new CursorState :
@@ -259,23 +274,26 @@ public defn CursorState (dstack:ListStack<DivState>, font:FontState, shapes:List
     defmethod move (this, newPt:Point) -> False :
       pt = newPt
     defmethod line-break (this) -> False :
+      val font = head(fstack)
       ; @TODO - I'm kind of hacking the break margin
       ;  by using 2x font size. Should do this better
-      pt = Point(0.0, y(pt) - 2.0 * size(font) )
+      pt = Point(0.0, y(pt) - 1.5 * size(font) )
     defmethod next-line (this) -> False :
+      val font = head(fstack)
       ; @TODO - margin ?
-      pt = Point(0.0, y(pt) - 1.1 * size(font) )
+      pt = Point(0.0, y(pt) - 1.2 * size(font) )
     defmethod text-write (this, content:String) :
       ; This function will generate the passed string as
       ;   text output at the current cursor.
       val tx = transform(dstack)
-      println("Transform: %~" % [tx])
+      val font = head(fstack)
+      ; println("Transform: %~" % [tx])
       val textPt = tx * loc(pt)
       val t = mk-text(font, content, textPt)
 
       push(shapes, t)
 
-      println("Point: %~  Text: %_" % [textPt, content])
+      ; println("Point: %~  Text: %_" % [textPt, content])
       val tSize = dims(t)
       val newX = x(pt) + x(tSize)
       if newX > x(size(div)):
@@ -287,6 +305,7 @@ public defn CursorState (dstack:ListStack<DivState>, font:FontState, shapes:List
     defmethod wrap-write (this, content:String) -> False :
       ; This function will attempt to wrap the passed text to the
       ;  available area of the div.
+      val font = head(fstack)
       val lines = word-wrap(content, div, font)
       for line in lines do:
         text-write(this, line)
@@ -304,7 +323,7 @@ public defn Renderer (sheet:Dims) -> Renderer :
   val lstack = ListStack<ListState>(None())
   val fstack = ListStack<FontState>(One(FontState(W, 2.5, 0.0)))
   val dstack = ListStack<DivState>(One(DivState(NW, loc(0.0,0.0), sheet)))
-  val cstack = ListStack<CursorState>(One(CursorState(dstack, head(fstack), shapes)))
+  val cstack = ListStack<CursorState>(One(CursorState(dstack, fstack, shapes)))
 
   var text = List()
 
@@ -334,10 +353,9 @@ public defn Renderer (sheet:Dims) -> Renderer :
                 process(this, doc, child)
               (t:TidyTag_H1|TidyTag_H2|TidyTag_H3|TidyTag_H4|TidyTag_H5|TidyTag_H6):
                 println("H")
-                ; @todo - commplete any open text operations.
 
-                ; @TODO - push on the fstack a new font
-                ;   for the header
+                val hFont = mk-header-state(head(fstack), t)
+                push(fstack, hFont)
 
                 val cursor = head(cstack)
                 line-break(cursor)
@@ -349,7 +367,7 @@ public defn Renderer (sheet:Dims) -> Renderer :
                 wrap-write(cursor, msg)
 
                 line-break(cursor)
-
+                pop(fstack)
                 ; Pop H header font
               (_:TidyTag_DIV):
               ;   ; This tag sets the area where the content will be
@@ -359,7 +377,7 @@ public defn Renderer (sheet:Dims) -> Renderer :
                 val next = make-div(curr, child)
                 push(dstack, next)
                 ; @TODO Update font stack here ?
-                push(cstack, CursorState(dstack, head(fstack), shapes))
+                push(cstack, CursorState(dstack, fstack, shapes))
 
                 process(this, doc, child)
                 pop(dstack)
@@ -382,7 +400,7 @@ public defn Renderer (sheet:Dims) -> Renderer :
 
                 push(dstack, next)
 
-                push(cstack, CursorState(dstack, head(fstack), shapes))
+                push(cstack, CursorState(dstack, fstack, shapes))
 
                 process(this, doc, child)
 
@@ -409,7 +427,7 @@ public defn Renderer (sheet:Dims) -> Renderer :
                 val next = DivState(NW, loc(dist, currY), Dims(x(d) - dist, y(d) - currY))
 
                 push(dstack, next)
-                push(cstack, CursorState(dstack, head(fstack), shapes))
+                push(cstack, CursorState(dstack, fstack, shapes))
 
                 process(this, doc, child)
 

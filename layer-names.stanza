@@ -1,0 +1,31 @@
+#use-added-syntax(jitx)
+defpackage design/layer-names :
+  import core
+  import collections
+  import jitx
+  import jitx/commands
+
+public defn layer-names () :
+  val type = "ALTIUM-LAYER-NAMES"
+  val layer-names = [
+    32 => "Bottom Layer"
+    1 => "Top Layer"
+    33 => "Top Overlay"
+    2 => "GND"
+    34 => "Bottom Overlay"
+    3 => "PWR"
+    35 => "Top Paste"
+    36 => "Bottom Paste"
+    37 => "Top Solder"
+    69 => "My Mechanical 13"
+    38 => "Bottom Solder"
+    71 => "Mechanical 15"
+    73 => "Drill Drawing"
+    57 => "Mechanical 1"
+    58 => "Board Outline"
+    59 => "Dimensions"
+    60 => "Fab Notes"
+    61 => "Sheet"
+    62 => "Top ConformalCoat Mask"
+    63 => "Bottom ConformalCoat Mask"]
+  set-cad-info(type, layer-names)

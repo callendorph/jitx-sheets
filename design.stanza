@@ -1,0 +1,66 @@
+#use-added-syntax(jitx)
+defpackage design-template :
+  import core
+  import jitx
+  import jitx/commands
+  import design/layer-names
+  import sheets/DrawingSheet
+  import sheets/HTML
+  import tidy/Document
+  import tidy/DocTree
+
+
+pcb-material copper :
+  type = Conductor
+  name = "Copper"
+
+pcb-material core :
+  type = Dielectric
+  dielectric-coefficient = 4.0
+  name = "FR4 Core"
+
+pcb-material soldermask :
+  type = Dielectric
+  dielectric-coefficient = 3.9
+  name = "Stub"
+
+public pcb-stackup simple-board :
+  name = "2-Layer"
+  layer(0.019, soldermask) ; 0.5mil over conductor
+  layer(0.035, copper)
+  layer(1.50, core)
+  layer(0.0175, copper)
+  layer(0.019, soldermask) ; 0.5mil over conductor
+
+
+val board-shape = RoundedRectangle(70.0, 120.0, 2.5)
+
+pcb-module my-design :
+
+  val paper = Point(25.4 * 17.0, 25.4 * 11.0)
+  val offset = loc(25.4 * 4.0, 0.0)
+  val frame = sheets/DrawingSheet/FrameProps(Point(5.0, 5.0), 5.0, 0.2, 1.5)
+  val layer = CustomLayer("Sheet")
+  add-sheet-template(paper, offset, layer, frame)
+
+
+  val r = Renderer(Dims(135.0, 80.0))
+  process(r, "FabNotes.html")
+  render(r, CustomLayer("Fab Notes"))
+
+; ==========================================
+; Configure the design, then run or check it
+; ==========================================
+defn run-design (circuit:Instantiable) :
+  set-design-directory("CAD")
+  layer-names()
+  set-board(ocdb/utils/defaults/default-board(simple-board, board-shape))
+
+  var main-module = circuit
+  set-main-module(main-module) ; Treat the provided module as a design, and compile it.
+  view-board()
+
+; ============
+; Run the code
+; ============
+run-design(my-design)

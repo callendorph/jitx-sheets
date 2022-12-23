@@ -1,0 +1,183 @@
+#use-added-syntax(tests)
+#use-added-syntax(jitx)
+defpackage sheets/tests/HTML :
+  import core
+  import jitx
+  import sheets/HTML
+  import tidy/Document
+  import tidy/DocTree
+  import tidy/Enums/TidyOptionId
+  import tidy/Options
+
+#if-defined(TESTING) :
+  public defn expect-throw (f) -> [True|False, String] :
+    try :
+      val unexpected = f()
+      [false, "No Exception Thrown"]
+    catch (e:Exception) :
+      val msg = to-string("%~" % [e])
+      [true, msg]
+
+
+deftest(html) test-get-style-attrs:
+  val doc = TidyDoc()
+
+  ; This cleans up the log output because otherwise it
+  ;   complains about things like doctypes, etc.
+  set-bool(doc, TidyShowWarnings, false)
+
+  val inVecs = [
+    ["<body style=\"width: 100; height: 50\"></body>", ["width" => "100", "height" => "50"]],
+    ["<body></body>", []],
+    ["<body style=\"align: center\"></body>", ["align" => "center"]],
+  ]
+  for inVec in inVecs do :
+    val [h, exp] = inVec
+
+    parse-str(doc, h)
+    val body = get-body(doc)
+    val obs = to-tuple(get-style-attrs(body))
+    #EXPECT(obs == exp)
+
+deftest(html) test-list-stack :
+
+  val stack = ListStack<ListState>(One(ListState(0, false)))
+  ;push(stack, ListState(0, false))
+
+  var state = head(stack)
+  #EXPECT(get-indent(state) == 0)
+  #EXPECT(get-index(state) == 0)
+
+  incr-index(state)
+  #EXPECT(get-index(state) == 1)
+  incr-index(state)
+  #EXPECT(get-index(state) == 2)
+
+  var child = indent(stack, true)
+  #EXPECT(get-indent(child) == 1)
+  #EXPECT(get-index(child) == 0)
+
+  incr-index(child)
+  #EXPECT(get-index(child) == 1)
+
+  incr-index(child)
+  #EXPECT(get-index(child) == 2)
+
+  incr-index(child)
+  #EXPECT(get-index(child) == 3)
+
+  state = head(stack)
+
+  #EXPECT(get-indent(state) == 1)
+  #EXPECT(get-index(state) == 3)
+
+  pop(stack)
+
+  state = head(stack)
+  #EXPECT(get-indent(state) == 0)
+  #EXPECT(get-index(state) == 2)
+
+  state = indent(stack, false)
+  #EXPECT(get-indent(state) == 1)
+  #EXPECT(get-index(state) == 0)
+
+  incr-index(state)
+  #EXPECT(get-index(state) == 1)
+
+  state = indent(stack, true)
+  #EXPECT(get-indent(state) == 2)
+  #EXPECT(get-index(state) == 0)
+
+  pop(stack)
+
+  state = head(stack)
+  #EXPECT(get-indent(state) == 1)
+  #EXPECT(get-index(state) == 1)
+
+  pop(stack)
+
+  state = head(stack)
+
+  incr-index(state)
+
+  #EXPECT(get-indent(state) == 0)
+  #EXPECT(get-index(state) == 3)
+  val last = pop(stack)
+  val [throws, msg] = expect-throw({pop(stack)})
+  #EXPECT(throws)
+
+  push(stack, last)
+
+  var obs = to-string(state)
+  #EXPECT(obs == "ListState(0, 3)")
+
+  obs = to-string(stack)
+  #EXPECT(obs == "Stack containing [ListState(0, 3)]")
+
+  state = indent(stack, false)
+  #EXPECT(get-indent(state) == 1)
+  #EXPECT(get-index(state) == 0)
+
+  obs = to-string(stack)
+  #EXPECT(obs == "Stack containing [ListState(1, 0) ListState(0, 3)]")
+
+  ; reset-stack(stack)
+
+  ; state = head(stack)
+  ; #EXPECT(get-indent(state) == 0)
+  ; #EXPECT(get-index(state) == 0)
+
+deftest(html) test-word-wrap :
+
+  val div = DivState(NW, loc(0.0,0.0), Dims(50.0, 25.0))
+  val font = FontState(W, 1.5, 0.0)
+
+  var ret = word-wrap("asdf", div, font)
+  #EXPECT(ret == ["asdf"])
+
+  ret = word-wrap("asdf qwer", div, font)
+  #EXPECT(ret == ["asdf qwer"])
+
+  ret = word-wrap("And there was a noise of thunder. And a voice that called - Come and See. And I saw.", div, font)
+  val exp = [
+    "And there was a noise of thunder. And",
+    "a voice that called - Come and See.",
+    "And I saw."
+  ]
+  #EXPECT(ret == exp)
+
+deftest(html) test-ordered-list :
+  val doc = TidyDoc()
+
+  ; This cleans up the log output because otherwise it
+  ;   complains about things like doctypes, etc.
+  set-bool(doc, TidyShowWarnings, false)
+
+  val msg = [
+    "<body>",
+    "<div width=\"100\" height=\"100\" x=\"10\" y=\"10\">",
+    "<h3> Header Here </h3>",
+    "<ol>",
+    "<li> Some Text Here </li>",
+    "<li> Some <b>Other</b> Text Here </li>",
+    "<li> Some Content about the below indents </li>",
+    "<ol>",
+    "<li> Indented Other </li>",
+    "<li> Indented Garbage </li>",
+    "</ol>",
+    "<li> More Stuff at the End </li>",
+    "</ol>",
+    "</div>",
+    "</body>",
+  ]
+  val input = string-join(msg)
+  ;clean-and-repair(doc)
+  parse-str(doc, input)
+  val body = value!(get-body(doc))
+
+  val r = Renderer(Dims(135.0, 80.0))
+
+  process(r, doc, body)
+
+  val shapes = get-shapes(r)
+  println("Shapes: %~" % [length(shapes)])

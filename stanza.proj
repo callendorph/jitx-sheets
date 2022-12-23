@@ -1,0 +1,22 @@
+include "lbstanza-tidy/stanza.proj"
+packages sheets/* defined-in "src/"
+packages sheets/tests/* defined-in "tests/"
+
+package design/layer-names defined-in "layer-names.stanza"
+package design-template defined-in "design.stanza"
+
+build main :
+  inputs:
+    ;sheets/DrawingSheet
+    sheets/TitleBlock
+    sheets/HTML
+  pkg: "pkgs"
+
+build-test sheets-tests :
+  inputs:
+    ;sheets/tests/DrawingSheet
+    sheets/tests/HTML
+    ;sheets/tests/DummyTest
+  pkg: "test-pkgs"
+  o: "sheets-tests"
+

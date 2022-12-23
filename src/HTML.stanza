@@ -1,0 +1,428 @@
+#use-added-syntax(jitx)
+defpackage sheets/HTML :
+  import core
+  import jitx
+  import jitx/commands
+  import tidy/Document
+  import tidy/DocTree
+  import tidy/Enums/TidyAttrId
+  import tidy/Enums/TidyTagId
+  import tidy/Enums/TidyNodeType
+
+public defstruct HTMLError <: Exception :
+  msg:String
+
+public defmethod print (o:OutputStream, e:HTMLError) :
+  print(o, "HTML Error: %_" % [msg(e)])
+
+public defn clip-to (parent:Rectangle, other:Rectangle) -> Rectangle :
+  ; @TODO implement this algorithm
+  other
+
+public defn get-attr-by-id (node:TidyNode, attrId:TidyAttrId, def:String) -> String:
+  val attr? = get-by-id(node, attrId)
+  match(attr?) :
+    (x:None): def
+    (o:One<TidyAttr>): get-value(value(o))
+
+public defn get-attr-by-id (node:TidyNode, attrId:TidyAttrId, def:Double) -> Double :
+  val attr? = get-by-id(node, attrId)
+  match(attr?) :
+    (x:None): def
+    (o:One<TidyAttr>):
+      val content = get-value(value(o))
+      match(to-double(content)):
+        (x:Double) : x
+        (t:False) :
+          println("Failed to Parse Attribute '%_': %_" % [attrId, content])
+          def
+
+public defn get-rect-from-attrs (n:TidyNode, def:Dims) -> Rectangle :
+  ; Get a Rectangle from tehe x,y,width,height attributes on a node.
+  val xp = get-attr-by-id(n, TidyAttr_X, 0.0)
+  val yp = get-attr-by-id(n, TidyAttr_Y, 0.0)
+  val w = to-double(get-attr-by-id(n, TidyAttr_WIDTH, x(def)))
+  val h = to-double(get-attr-by-id(n, TidyAttr_HEIGHT, y(def)))
+
+  Rectangle(w, h, loc(xp,yp))
+
+public defn word-wrap (content:String, div:DivState, font:FontState) -> Tuple<String> :
+  ; Split the content on word boundaries into lines that fill the available div area
+  ; This algorithm is VERY basic - it isn't intended to be the best, just functional
+  val words = split(content, " ")
+  val w = x(size(div))
+  var lastLine:String = ""
+  var ret = List()
+  for word in words do :
+    var comps = [lastLine, word]
+    comps = filter({length(_) > 0}, comps)
+    val line = string-join(comps, " ")
+    val size = get-dims(font, line)
+    ;println("Line: %_" % [line])
+    ;println("Size: %~" % [size])
+    if x(size) > w :
+      ret = cons(lastLine, ret)
+      lastLine = word
+    else:
+      lastLine = line
+  if length(lastLine) > 0:
+    ret = cons(lastLine, ret)
+  to-tuple(reverse(ret))
+
+
+public defn parse-style (v:String) -> KeyValue<String,String> :
+  val tpart = trim(v)
+  val comps = map(trim, to-tuple(split(tpart, ":")))
+  if length(comps) != 2:
+    throw(HTMLError(to-string("Failed to Unpack Style Attributes: %_" % [v])))
+  KeyValue(comps[0], comps[1])
+
+public defn get-style-attrs (node:TidyNode) -> Seq<KeyValue> :
+  generate<KeyValue>:
+    val attr? = get-by-id(node, TidyAttr_STYLE)
+    match(attr?):
+      (x:None): break()
+      (o:One<TidyAttr>):
+        val style = value(o)
+        val v = get-value(style)
+        for part in split(v, ";") do :
+          yield(parse-style(part))
+
+public defn get-style-attrs (node:Maybe<TidyNode>) -> Seq<KeyValue> :
+  match(node):
+    (x:None): to-seq([])
+    (o:One<TidyNode>):
+      get-style-attrs(value(o))
+
+public defstruct ListStackError <: Exception:
+  msg:String
+
+public defmethod print (o:OutputStream, e:ListStackError) :
+  print(o, "List Error: %_" % [msg(e)])
+
+; Base class for all datatypes used in
+;  Stack implementation ?
+public deftype BaseState
+public defmulti reset-state (self:BaseState) -> False
+
+public deftype ListState <: BaseState
+public defmulti get-indent (self:ListState) -> Int
+public defmulti get-index (self:ListState) -> Int
+public defmulti is-ordered? (self:ListState) -> True|False
+public defmulti incr-index (self:ListState) -> Int
+
+public defn ListState (startIndent:Int, ordered?:True|False, startIndex:Int) -> ListState :
+  var indent:Int = startIndent
+  var index:Int = startIndex
+  val ordered:True|False = ordered?
+  new ListState :
+    defmethod get-indent (this) -> Int : indent
+    defmethod get-index (this) -> Int : index
+    defmethod is-ordered? (this) -> True|False : ordered
+    defmethod incr-index (this) -> Int :
+      index = index + 1
+      index
+    defmethod reset-state (this) -> False:
+      indent = 0
+      index = 0
+    defmethod print (o:OutputStream, this):
+      print(o, "ListState(%_, %_)" % [indent, index])
+
+public defn ListState (startIndent:Int, ordered?:True|False) -> ListState :
+  ListState(startIndent, ordered?, 0)
+
+public defn ListState (curr:ListState, ordered?:True|False) -> ListState :
+    ListState(get-indent(curr) + 1, ordered?)
+
+public deftype DivState <: BaseState
+public defmulti anchor (self:DivState) -> Anchor
+public defmulti pose (self:DivState) -> Pose
+public defmulti size (self:DivState) -> Dims
+public defmulti get-rect (self:DivState) -> Rectangle
+public defmulti make-div (self:DivState, div:TidyNode) -> DivState
+
+public defn DivState (a:Anchor, p:Pose, d:Dims) -> DivState :
+  val origin = p
+  val size = d
+  val anchor = a
+
+  new DivState :
+    defmethod pose (this) : origin
+    defmethod size (this) : size
+    defmethod anchor (this) : anchor
+    defmethod get-rect (this) -> Rectangle :
+      Rectangle(x(size), y(size), pose(this))
+    defmethod make-div (this, div:TidyNode) :
+      val currR = get-rect(this)
+      val r = get-rect-from-attrs(div, dims(currR))
+      val newR = clip-to(currR, r)
+      println("New Div R: %~" % [newR])
+      val p = center(pose(newR))
+      DivState(NW, loc(x(p), y(p)), Dims(width(newR), height(newR)))
+
+public defn transform (stack:ListStack<DivState>) -> Pose :
+  defn f (a:Pose, b:DivState) -> Pose :
+    a * pose(b)
+  reduce(f, loc(0.0, 0.0), to-seq(stack))
+
+public deftype FontState <: BaseState
+defmulti anchor (self:FontState) -> Anchor
+defmulti size (self:FontState) -> Double
+defmulti angle (self:FontState) -> Double
+defmulti mk-text (self:FontState, content:String, p:Pose) -> Shape
+defmulti mk-text (self:FontState, content:String) -> Shape
+defmulti get-dims (self:FontState, content:String) -> Dims
+
+public defn FontState (a:Anchor, s:Double, ang:Double) -> FontState :
+  val anchor = a
+  val size = s
+  val angle = ang
+
+  new FontState :
+    defmethod anchor (this) : anchor
+    defmethod size (this) : size
+    defmethod angle (this) : angle
+    defmethod mk-text (this, content:String, p:Pose) -> Shape :
+      Text(content, size, anchor, p)
+    defmethod mk-text (this, content:String) -> Shape :
+      mk-text(this, content, loc(0.0, 0.0))
+    defmethod get-dims (this, content:String) -> Dims :
+      dims(mk-text(this, content))
+
+public deftype ListStack<T> <: Collection<T>
+public defmulti push<?T> (s:ListStack<?T>, x:T) -> False
+public defmulti pop<?T> (s:ListStack<?T>) -> T
+public defmulti head<?T> (s:ListStack<?T>) -> T
+public defmulti reset-stack<?T> (s:ListStack<?T>) -> False
+public defmulti is-root?<?T> (s:ListStack<?T>) -> True|False
+public defmulti empty?<?T> (s:ListStack<?T>) -> True|False
+
+public defn ListStack<T> (initial:Maybe<T>) -> ListStack :
+  var items = List()
+  match(initial):
+    (x:One<T>): items = cons(value(x), items)
+    (t:None): items = List()
+
+  new ListStack :
+    defmethod push (this, x:T) -> False:
+      items = cons(x, items)
+    defmethod pop (this) -> T :
+      if empty?(this):
+        throw(ListStackError("Stack must not be empty - Pop on empty list is invalid"))
+      val ret = head(items)
+      items = tailn(items, 1)
+      ret
+    defmethod head (this) -> T :
+      head(items)
+    defmethod reset-stack (this) -> False :
+      match(initial):
+        (x:One<T>): items = cons(value(x), items)
+        (t:None): items = List()
+    defmethod is-root? (this) -> True|False :
+      length(items) == 1
+    defmethod empty? (this) -> True|False :
+      length(items) == 0
+    defmethod print (o:OutputStream, this) :
+      print(o, "Stack containing [")
+      print-all(o, join(this, " "))
+      print(o, "]")
+    defmethod to-seq (this):
+      to-seq(items)
+
+public defmethod reset-stack (stack:ListStack<ListState>) -> False :
+  val s = stack as ListStack
+  reset-stack(s)
+  val h = head(stack)
+  reset-state(h)
+
+public defn indent (stack:ListStack<ListState>, ordered?:True|False) -> ListState :
+  ; Helper method for ol/ul lists
+  var next = ListState(0, ordered?)
+  if not empty?(stack):
+    next = ListState(head(stack), ordered?)
+  push(stack, next)
+  next
+
+public deftype CursorState
+public defmulti position (self:CursorState) -> Point
+public defmulti line-break (self:CursorState) -> False
+public defmulti next-line (self:CursorState) -> False
+public defmulti move (self:CursorState, newPt:Point) -> False
+public defmulti text-write (self:CursorState, content:String) -> False
+public defmulti wrap-write (self:CursorState, content:String) -> False
+
+public defn CursorState (dstack:ListStack<DivState>, font:FontState, shapes:ListStack<Shape>) -> CursorState :
+  val div = head(dstack)
+  var pt = Point(0.0, 0.0)
+  new CursorState :
+    defmethod position (this) -> Point : pt
+    defmethod move (this, newPt:Point) -> False :
+      pt = newPt
+    defmethod line-break (this) -> False :
+      ; @TODO - I'm kind of hacking the break margin
+      ;  by using 2x font size. Should do this better
+      pt = Point(0.0, y(pt) - 2.0 * size(font) )
+    defmethod next-line (this) -> False :
+      ; @TODO - margin ?
+      pt = Point(0.0, y(pt) - 1.1 * size(font) )
+    defmethod text-write (this, content:String) :
+      ; This function will generate the passed string as
+      ;   text output at the current cursor.
+      val tx = transform(dstack)
+      println("Transform: %~" % [tx])
+      val textPt = tx * loc(pt)
+      val t = mk-text(font, content, textPt)
+
+      push(shapes, t)
+
+      println("Point: %~  Text: %_" % [textPt, content])
+      val tSize = dims(t)
+      val newX = x(pt) + x(tSize)
+      if newX > x(size(div)):
+        ; Updated cursor position will need to be on the next line.
+        next-line(this)
+      else:
+        pt = Point(newX, y(pt))
+
+    defmethod wrap-write (this, content:String) -> False :
+      ; This function will attempt to wrap the passed text to the
+      ;  available area of the div.
+      val lines = word-wrap(content, div, font)
+      for line in lines do:
+        text-write(this, line)
+
+public deftype Renderer
+; Recursive method that renders the HTML document tree.
+public defmulti process (s:Renderer, doc:TidyDoc, node:TidyNode) -> False
+public defmulti get-shapes (s:Renderer) -> Tuple<Shape>
+public defmulti render (s:Renderer, layerSpec:LayerSpecifier) -> False
+
+public defn Renderer (sheet:Dims) -> Renderer :
+
+  val shapes = ListStack<Shape>(None())
+
+  val lstack = ListStack<ListState>(None())
+  val fstack = ListStack<FontState>(One(FontState(W, 2.5, 0.0)))
+  val dstack = ListStack<DivState>(One(DivState(NW, loc(0.0,0.0), sheet)))
+  val cstack = ListStack<CursorState>(One(CursorState(dstack, head(fstack), shapes)))
+
+  var text = List()
+
+  new Renderer :
+    defmethod get-shapes (this) -> Tuple<Shape> :
+      to-tuple(to-seq(shapes))
+    defmethod render (this, layerSpec:LayerSpecifier) -> False :
+      ; Render the captured shapes to the passed sheet.
+      inside pcb-module:
+        for shape in to-seq(shapes) do:
+          layer(layerSpec) = shape
+    defmethod process (this, doc:TidyDoc, node:TidyNode) -> False:
+      ; Recursively process the nodes of an HTML document starting with
+      ;  the passed node.
+      for child in get-children(node) do:
+        val chType = get-type(child)
+        val chId = get-id(child)
+        match(chType):
+          (_:TidyNode_Text):
+            if has-text?(doc, child):
+              val content = get-value(doc, child)
+              text = cons(content, text)
+          (_:TidyNode_Start):
+            match( chId ):
+              (_:TidyTag_B|TidyTag_I|TidyTag_U):
+                println("Tag %_ Not Supported Yet - Just Adding Text" %[get-name(child)])
+                process(this, doc, child)
+              (t:TidyTag_H1|TidyTag_H2|TidyTag_H3|TidyTag_H4|TidyTag_H5|TidyTag_H6):
+                println("H")
+                ; @todo - commplete any open text operations.
+
+                ; @TODO - push on the fstack a new font
+                ;   for the header
+
+                val cursor = head(cstack)
+                line-break(cursor)
+
+                process(this, doc, child)
+
+                val msg = string-join(reverse(text))
+                text = List()
+                wrap-write(cursor, msg)
+
+                line-break(cursor)
+
+                ; Pop H header font
+              (_:TidyTag_DIV):
+              ;   ; This tag sets the area where the content will be
+              ;   ; rendered.
+                println("Div")
+                val curr = head(dstack)
+                val next = make-div(curr, child)
+                push(dstack, next)
+                ; @TODO Update font stack here ?
+                push(cstack, CursorState(dstack, head(fstack), shapes))
+
+                process(this, doc, child)
+                pop(dstack)
+                pop(cstack)
+
+              (_:TidyTag_LI):
+                val h = head(lstack)
+
+                val cursor = head(cstack)
+                ; @TODO differentiate between ol and ul
+                val olIndex:Int = get-index(h) + 1
+                val indexStr = to-string("%~." % [olIndex])
+                text-write(cursor, indexStr)
+
+                val currY = y(position(cursor))
+                val currDiv = head(dstack)
+                val d = size(currDiv)
+                val dist = 2.0
+                val next = DivState(NW, loc(dist, 0.0), Dims(x(d) - dist, y(d) - currY))
+
+                push(dstack, next)
+
+                push(cstack, CursorState(dstack, head(fstack), shapes))
+
+                process(this, doc, child)
+
+                val msg = string-join(reverse(text))
+                text = List() ; Reset Text Buffer
+                ;val olIndex = get-index(h) + 1
+
+                wrap-write(cursor, msg)
+                next-line(cursor)
+                incr-index(h)
+
+                pop(cstack)
+                pop(dstack)
+
+              (t:TidyTag_OL|TidyTag_UL):
+                ; Indent the list stack for ordered lists
+                indent(lstack, t == TidyTag_OL)
+
+                val cursor = head(cstack)
+                val currY = y(position(cursor))
+                val currDiv = head(dstack)
+                val d = size(currDiv)
+                val dist = 5.0
+                val next = DivState(NW, loc(dist, currY), Dims(x(d) - dist, y(d) - currY))
+
+                push(dstack, next)
+                push(cstack, CursorState(dstack, head(fstack), shapes))
+
+                process(this, doc, child)
+
+                val last = pop(cstack)
+                val pt = position(last)
+                println("Last Position: %~" % [pt])
+                val curs2 = head(cstack)
+                val currPt = position(curs2)
+                println("Curr Position: %~" % [currPt])
+                move(curs2, Point(x(currPt), y(currPt) + y(pt)))
+
+                ;pop(cstack)
+                pop(dstack)
+                pop(lstack)
+
+

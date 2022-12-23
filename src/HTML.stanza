@@ -315,6 +315,7 @@ public deftype Renderer
 public defmulti process (s:Renderer, doc:TidyDoc, node:TidyNode) -> False
 public defmulti get-shapes (s:Renderer) -> Tuple<Shape>
 public defmulti render (s:Renderer, layerSpec:LayerSpecifier) -> False
+public defmulti reset-text-buffer (s:Renderer) -> False
 
 public defn Renderer (sheet:Dims) -> Renderer :
 
@@ -335,6 +336,8 @@ public defn Renderer (sheet:Dims) -> Renderer :
       inside pcb-module:
         for shape in to-seq(shapes) do:
           layer(layerSpec) = shape
+    defmethod reset-text-buffer (this) -> False :
+      text = List()
     defmethod process (this, doc:TidyDoc, node:TidyNode) -> False:
       ; Recursively process the nodes of an HTML document starting with
       ;  the passed node.
@@ -363,7 +366,8 @@ public defn Renderer (sheet:Dims) -> Renderer :
                 process(this, doc, child)
 
                 val msg = string-join(reverse(text))
-                text = List()
+                reset-text-buffer(this)
+
                 wrap-write(cursor, msg)
 
                 line-break(cursor)
@@ -405,8 +409,7 @@ public defn Renderer (sheet:Dims) -> Renderer :
                 process(this, doc, child)
 
                 val msg = string-join(reverse(text))
-                text = List() ; Reset Text Buffer
-                ;val olIndex = get-index(h) + 1
+                reset-text-buffer(this)
 
                 wrap-write(cursor, msg)
                 next-line(cursor)

@@ -1,0 +1,3 @@
+[submodule "lbstanza-tidy"]
+	path = lbstanza-tidy
+	url = ssh://callendorph-github/callendorph/lbstanza-tidy

@@ -276,6 +276,7 @@ public defmulti line-break (self:CursorState) -> False
 public defmulti next-line (self:CursorState) -> False
 public defmulti line-return (self:CursorState) -> False
 public defmulti move (self:CursorState, newPt:Point) -> False
+public defmulti raw-write (this, content:String) -> Shape
 public defmulti text-write (self:CursorState, content:String) -> False
 public defmulti wrap-write (self:CursorState, content:String) -> False
 public defmulti list-marker-write (self:CursorState, indent:Int) -> False
@@ -301,7 +302,8 @@ public defn CursorState (dstack:ListStack<DivState>, fstack:ListStack<FontState>
       ; Move back to the beginning of the div
       ;  but maintain the current y.
       pt = Point(0.0, y(pt))
-    defmethod text-write (this, content:String) :
+
+    defmethod raw-write (this, content:String) -> Shape :
       ; This function will generate the passed string as
       ;   text output at the current cursor.
       val tx = transform(dstack)
@@ -311,7 +313,10 @@ public defn CursorState (dstack:ListStack<DivState>, fstack:ListStack<FontState>
       val t = mk-text(font, content, textPt)
 
       push(shapes, t)
+      t
 
+    defmethod text-write (this, content:String) :
+      val t = raw-write(this, content)
       ; println("Point: %~  Text: %_" % [textPt, content])
       update-cursor(this, t)
 
@@ -330,7 +335,8 @@ public defn CursorState (dstack:ListStack<DivState>, fstack:ListStack<FontState>
       val font = head(fstack)
       val lines = word-wrap(content, div, font)
       for line in lines do:
-        text-write(this, line)
+        raw-write(this, line)
+        next-line(this)
 
     defmethod list-marker-write (this, indent:Int) -> False :
       val font = head(fstack)
@@ -456,7 +462,7 @@ public defn Renderer (sheet:Dims) -> Renderer :
                   reset-text-buffer(this)
 
                   wrap-write(cursor, msg)
-                  next-line(cursor)
+
                   incr-index(h)
                   false
 
